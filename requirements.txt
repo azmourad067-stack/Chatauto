@@ -1,0 +1,24 @@
+# Core
+streamlit>=1.38.0
+pandas>=2.2.2
+numpy>=1.26.4
+requests>=2.31.0
+beautifulsoup4>=4.12.3
+lxml>=5.2.1
+plotly>=5.23.0
+scikit-learn>=1.5.0
+tensorflow>=2.17.0
+keras>=3.3.3
+
+# Utilitaires
+regex>=2024.5.15
+python-dateutil>=2.9.0.post0
+joblib>=1.4.2
+
+# Logging / persistance
+mlflow>=2.15.0
+rich>=13.7.1
+
+# Pour la compatibilité cloud
+protobuf>=4.25.3
+watchdog>=4.0.1

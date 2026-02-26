@@ -7,7 +7,7 @@ from PIL import Image
 import re
 import time
 
-# Tentative d'import des modèles Transformers (peut échouer)
+# Tentative d'import des modèles Transformers (optionnel)
 try:
     from transformers import TableTransformerForObjectDetection, DetrImageProcessor
     import timm
@@ -22,7 +22,7 @@ except ImportError:
 st.set_page_config(page_title="Pronostics Hippiques IA", layout="wide")
 
 # ------------------------------------------------------------
-# Initialisation des modèles (mise en cache)
+# Initialisation des modèles
 # ------------------------------------------------------------
 @st.cache_resource
 def load_ocr_reader():
@@ -30,7 +30,6 @@ def load_ocr_reader():
 
 @st.cache_resource
 def load_table_detector():
-    """Charge le modèle Table Transformer si possible"""
     if not TRANSFORMERS_AVAILABLE:
         return None, None
     try:
@@ -42,59 +41,34 @@ def load_table_detector():
         return None, None
 
 # ------------------------------------------------------------
-# Fonctions de nettoyage et parsing (reprises de la version précédente)
+# Fonctions de parsing spécifiques aux courses de plat
 # ------------------------------------------------------------
-def clean_text(text):
-    if not isinstance(text, str):
-        return text
-    text = text.replace('|', '1').replace('O', '0').replace('l', '1')
-    return text.strip()
-
-def parse_percentage(pct_str):
-    if isinstance(pct_str, str):
-        match = re.search(r'(\d+(?:[.,]\d+)?)\s*%', pct_str)
-        if match:
-            return float(match.group(1).replace(',', '.')) / 100
-    return None
-
-def parse_gains(gains_str):
-    if isinstance(gains_str, str):
-        gains_str = gains_str.replace(' ', '').replace('\u202f', '')
-        match = re.search(r'(\d+)', gains_str)
-        if match:
-            return int(match.group(1))
-    return None
-
-def parse_record(record_str):
-    if isinstance(record_str, str):
-        match = re.search(r"(\d+)'(\d+)\"?(\d?)", record_str)
-        if match:
-            minutes = int(match.group(1))
-            secondes = int(match.group(2))
-            dixiemes = int(match.group(3)) if match.group(3) else 0
-            return minutes * 60 + secondes + dixiemes / 10
-    return None
-
-def parse_musique(musique_str):
+def parse_musique_plat(musique_str):
+    """
+    Extrait les performances récentes à partir d'une chaîne de musique de plat.
+    Exemples : "[[8p][1p] (42,5)" -> ["8p", "1p"]
+                "3p(25)4p" -> ["3p", "4p"]
+                "[4p](25)1p" -> ["4p", "1p"]
+    """
     if not isinstance(musique_str, str):
         return []
-    musique_str = re.sub(r'\(\d+\)', '', musique_str)
-    pattern = r'(\d*[aAmM]?[aA]?|Da|Dm|0a)'
+    # Supprimer les parenthèses avec années et les crochets
+    musique_str = re.sub(r'\([^)]*\)', '', musique_str)  # enlever (25)
+    musique_str = musique_str.replace('[', '').replace(']', '')
+    # Trouver toutes les occurrences de chiffres suivis de p (parfois avec des crochets)
+    pattern = r'(\d+p)'
     parts = re.findall(pattern, musique_str)
-    return [p for p in parts if p]
+    return parts
 
-def score_musique(musique_list, max_items=5):
+def score_musique_plat(musique_list, max_items=5):
+    """
+    Calcule un score à partir des dernières performances en plat.
+    Pondération: 1p=10, 2p=8, 3p=6, 4p=5, 5p=4, 6p=3, 7p=2, 8p=1, 9p=0, etc.
+    """
     weights = {
-        '1a':10,'1m':10,
-        '2a':8,'2m':8,
-        '3a':6,'3m':6,
-        '4a':5,'4m':5,
-        '5a':4,'5m':4,
-        '6a':3,'6m':3,
-        '7a':2,'7m':2,
-        '8a':1,'8m':1,
-        '9a':0,'9m':0,
-        'Da':0,'Dm':0,'0a':0
+        '1p': 10, '2p': 8, '3p': 6, '4p': 5, '5p': 4,
+        '6p': 3, '7p': 2, '8p': 1, '9p': 0, '10p': 0,
+        '11p': 0, '12p': 0, '13p': 0, '14p': 0
     }
     recent = musique_list[:max_items]
     if not recent:
@@ -105,143 +79,206 @@ def score_musique(musique_list, max_items=5):
         if perf_lower in weights:
             total += weights[perf_lower]
         else:
-            match = re.match(r'(\d+)a', perf_lower)
+            # Si c'est comme '4p' mais pas dans le dictionnaire, on essaie d'extraire le chiffre
+            match = re.match(r'(\d+)p', perf_lower)
             if match:
                 place = int(match.group(1))
-                if 1 <= place <= 9:
+                if place <= 9:
                     total += max(0, 10 - place)
+                else:
+                    total += 0
+            else:
+                total += 0
     return total / len(recent)
 
-def clean_dataframe(df, table_type):
+def parse_valeur(valeur_str):
+    """Extrait la valeur (handicap) d'une chaîne comme '42' ou '38,5'."""
+    if isinstance(valeur_str, str):
+        # Remplacer la virgule par un point pour conversion
+        valeur_str = valeur_str.replace(',', '.')
+        match = re.search(r'(\d+(?:\.\d+)?)', valeur_str)
+        if match:
+            return float(match.group(1))
+    return None
+
+# ------------------------------------------------------------
+# Fonctions de nettoyage génériques
+# ------------------------------------------------------------
+def clean_text(text):
+    if not isinstance(text, str):
+        return text
+    text = text.replace('|', '1').replace('O', '0').replace('l', '1')
+    return text.strip()
+
+# ------------------------------------------------------------
+# Détection de la structure du tableau (améliorée)
+# ------------------------------------------------------------
+def detect_table_structure_fallback(text_boxes):
+    """
+    Version améliorée pour détecter les lignes et colonnes.
+    Retourne un DataFrame avec les données brutes.
+    """
+    if not text_boxes:
+        return pd.DataFrame()
+    
+    # Trier par y
+    text_boxes.sort(key=lambda x: x['y'])
+    
+    # Regrouper par lignes (avec seuil adaptatif)
+    heights = [box['y_max'] - box['y_min'] for box in text_boxes]
+    avg_height = np.mean(heights) if heights else 20
+    line_threshold = avg_height * 0.6
+    
+    lines = []
+    current_line = []
+    current_y = None
+    for box in text_boxes:
+        if current_y is None or abs(box['y'] - current_y) < line_threshold:
+            current_line.append(box)
+            current_y = box['y']
+        else:
+            lines.append(sorted(current_line, key=lambda x: x['x']))
+            current_line = [box]
+            current_y = box['y']
+    if current_line:
+        lines.append(sorted(current_line, key=lambda x: x['x']))
+    
+    if not lines:
+        return pd.DataFrame()
+    
+    # Identifier la ligne d'en-tête : on prend la ligne qui contient le plus de mots-clés possibles
+    header_keywords = ['n°', 'cheval', 'jockey', 'entraîneur', 'poids', 'musique', 'valeur']
+    best_header_idx = 0
+    best_score = -1
+    for i, line in enumerate(lines):
+        texts = ' '.join([item['text'].lower() for item in line])
+        score = sum(1 for kw in header_keywords if kw in texts)
+        if score > best_score:
+            best_score = score
+            best_header_idx = i
+    
+    header_line = lines[best_header_idx]
+    columns = [item['text'] for item in header_line]
+    
+    # Lignes de données : après l'en-tête
+    data_lines = lines[best_header_idx+1:]
+    
+    data_rows = []
+    for line in data_lines:
+        row = {}
+        for item in line:
+            # Trouver la colonne la plus proche
+            distances = [abs(item['x'] - h['x']) for h in header_line]
+            best_col_idx = np.argmin(distances)
+            best_col = columns[best_col_idx]
+            row[best_col] = item['text']
+        data_rows.append(row)
+    
+    df = pd.DataFrame(data_rows)
+    # Ne garder que les colonnes présentes dans l'en-tête
+    cols_present = [c for c in columns if c in df.columns]
+    if cols_present:
+        df = df[cols_present]
+    return df
+
+# ------------------------------------------------------------
+# Nettoyage spécifique selon le type de tableau détecté
+# ------------------------------------------------------------
+def detect_table_type(df):
+    """Détermine le type de tableau en fonction des colonnes présentes."""
+    text = ' '.join(df.columns).lower()
+    if 'jockey' in text or 'jockey' in str(df.iloc[0] if not df.empty else ''):
+        return 'plat'
+    elif 'driver' in text:
+        return 'trot'
+    elif 'record' in text:
+        return 'records'
+    else:
+        return 'unknown'
+
+def clean_dataframe_plat(df):
+    """Nettoie un DataFrame de type plat (partants)."""
     df = df.copy()
     df = df.dropna(how='all')
+    
+    # Renommer les colonnes si nécessaire (par exemple si OCR a mal interprété)
+    col_mapping = {}
+    for col in df.columns:
+        col_lower = col.lower()
+        if 'n°' in col_lower or 'no' in col_lower or 'num' in col_lower:
+            col_mapping[col] = 'N°'
+        elif 'cheval' in col_lower:
+            col_mapping[col] = 'Cheval'
+        elif 'jockey' in col_lower:
+            col_mapping[col] = 'Jockey'
+        elif 'entraîneur' in col_lower or 'entraineur' in col_lower:
+            col_mapping[col] = 'Entraîneur'
+        elif 'poids' in col_lower:
+            col_mapping[col] = 'Poids'
+        elif 'musique' in col_lower:
+            col_mapping[col] = 'Musique'
+        elif 'valeur' in col_lower or 'val' in col_lower:
+            col_mapping[col] = 'Valeur'
+    df.rename(columns=col_mapping, inplace=True)
+    
+    # Nettoyer chaque cellule
     for col in df.columns:
         df[col] = df[col].apply(lambda x: clean_text(x) if isinstance(x, str) else x)
     
-    if table_type == 'partants':
-        if 'N°' in df.columns:
-            df['N°'] = pd.to_numeric(df['N°'], errors='coerce')
-        if 'Gains' in df.columns:
-            df['Gains'] = df['Gains'].apply(parse_gains)
-        if 'Musique' in df.columns:
-            df['Musique_cheval'] = df['Musique'].apply(parse_musique)
-    elif table_type == 'drivers':
-        if 'Réussite' in df.columns:
-            df['Reussite_driver'] = df['Réussite'].apply(parse_percentage)
-        if 'Courses' in df.columns:
-            df['Courses_driver'] = pd.to_numeric(df['Courses'], errors='coerce')
-        if 'Victoires' in df.columns:
-            df['Victoires_driver'] = pd.to_numeric(df['Victoires'], errors='coerce')
-        if 'Ecart' in df.columns:
-            df['Ecart_driver'] = pd.to_numeric(df['Ecart'], errors='coerce')
-        if 'Musique Driver' in df.columns:
-            df['Musique_driver'] = df['Musique Driver'].apply(parse_musique)
-    elif table_type == 'entraineurs':
-        if 'Réussite' in df.columns:
-            df['Reussite_entraineur'] = df['Réussite'].apply(parse_percentage)
-        if 'Courses' in df.columns:
-            df['Courses_entraineur'] = pd.to_numeric(df['Courses'], errors='coerce')
-        if 'Victoires' in df.columns:
-            df['Victoires_entraineur'] = pd.to_numeric(df['Victoires'], errors='coerce')
-        if 'Ecart' in df.columns:
-            df['Ecart_entraineur'] = pd.to_numeric(df['Ecart'], errors='coerce')
-        if 'Musique Entraîneur' in df.columns:
-            df['Musique_entraineur'] = df['Musique Entraîneur'].apply(parse_musique)
-    elif table_type == 'records':
-        if 'Record' in df.columns:
-            df['Record_secondes'] = df['Record'].apply(parse_record)
+    # Convertir les types
+    if 'N°' in df.columns:
+        df['N°'] = pd.to_numeric(df['N°'], errors='coerce')
+    if 'Valeur' in df.columns:
+        df['Valeur'] = df['Valeur'].apply(parse_valeur)
+    if 'Musique' in df.columns:
+        df['Musique_list'] = df['Musique'].apply(parse_musique_plat)
+        df['Score_musique'] = df['Musique_list'].apply(lambda x: score_musique_plat(x) if isinstance(x, list) else 0)
+    
     return df
 
-def fusionner_donnees(partants_df, drivers_df, entraineurs_df, records_df):
-    if partants_df is None or partants_df.empty:
-        return pd.DataFrame()
-    
-    def normalize_name(name):
-        if isinstance(name, str):
-            name = name.strip().lower()
-            name = name.replace('é','e').replace('è','e').replace('ê','e').replace('à','a').replace('ç','c')
-            return name
-        return ''
-    
-    partants_df['cheval_norm'] = partants_df['Cheval'].apply(normalize_name)
-    
-    def merge_table(base_df, other_df, suffix):
-        if other_df is None or other_df.empty:
-            return base_df
-        other_df['cheval_norm'] = other_df['Cheval'].apply(normalize_name)
-        merged = pd.merge(base_df, other_df, on=['N°', 'cheval_norm'], how='left', suffixes=('', suffix))
-        return merged
-    
-    if drivers_df is not None:
-        partants_df = merge_table(partants_df, drivers_df, '_driver')
-    if entraineurs_df is not None:
-        partants_df = merge_table(partants_df, entraineurs_df, '_entraineur')
-    if records_df is not None:
-        partants_df = merge_table(partants_df, records_df, '_record')
-    
-    partants_df['score_musique_cheval'] = partants_df['Musique_cheval'].apply(lambda x: score_musique(x) if isinstance(x, list) else 0)
-    if 'Musique_driver' in partants_df.columns:
-        partants_df['score_musique_driver'] = partants_df['Musique_driver'].apply(lambda x: score_musique(x) if isinstance(x, list) else 0)
-    if 'Musique_entraineur' in partants_df.columns:
-        partants_df['score_musique_entraineur'] = partants_df['Musique_entraineur'].apply(lambda x: score_musique(x) if isinstance(x, list) else 0)
-    
-    return partants_df
-
 # ------------------------------------------------------------
-# Fonctions de scoring
+# Scoring adapté au plat
 # ------------------------------------------------------------
-def calculer_score_cheval(row, weights=None):
-    if weights is None:
-        weights = {
-            'record': 0.20,
-            'reussite_driver': 0.15,
-            'reussite_entraineur': 0.15,
-            'musique_cheval': 0.20,
-            'musique_driver': 0.10,
-            'musique_entraineur': 0.10,
-            'gains': 0.05,
-            'ecart_driver': 0.03,
-            'ecart_entraineur': 0.02
-        }
+def calculer_score_plat(row):
+    """
+    Score basé sur la valeur (handicap) et la musique.
+    Plus la valeur est élevée, meilleur est le cheval (handicap).
+    """
     score = 0
-    if pd.notna(row.get('Record_secondes')):
-        score += weights['record'] * (1 / row['Record_secondes'])
-    if pd.notna(row.get('Reussite_driver')):
-        score += weights['reussite_driver'] * row['Reussite_driver']
-    if pd.notna(row.get('Reussite_entraineur')):
-        score += weights['reussite_entraineur'] * row['Reussite_entraineur']
-    if pd.notna(row.get('score_musique_cheval')):
-        score += weights['musique_cheval'] * (row['score_musique_cheval'] / 10)
-    if pd.notna(row.get('score_musique_driver')):
-        score += weights['musique_driver'] * (row['score_musique_driver'] / 10)
-    if pd.notna(row.get('score_musique_entraineur')):
-        score += weights['musique_entraineur'] * (row['score_musique_entraineur'] / 10)
-    if pd.notna(row.get('Gains')):
-        score += weights['gains'] * (row['Gains'] / 100000)
-    if pd.notna(row.get('Ecart_driver')):
-        score += weights['ecart_driver'] * (1 / (1 + row['Ecart_driver']))
-    if pd.notna(row.get('Ecart_entraineur')):
-        score += weights['ecart_entraineur'] * (1 / (1 + row['Ecart_entraineur']))
+    weights = {
+        'valeur': 0.6,
+        'musique': 0.4
+    }
+    if pd.notna(row.get('Valeur')):
+        # Normaliser la valeur par rapport à la fourchette (ex: entre 30 et 45)
+        # Ici on suppose que les valeurs sont entre 30 et 45, on normalise entre 0 et 1
+        val = row['Valeur']
+        # À ajuster selon les données réelles
+        val_norm = (val - 30) / 15  # donne entre 0 et 1 si val entre 30 et 45
+        val_norm = max(0, min(1, val_norm))
+        score += weights['valeur'] * val_norm
+    
+    if pd.notna(row.get('Score_musique')):
+        # Score musique déjà entre 0 et 10
+        score += weights['musique'] * (row['Score_musique'] / 10)
+    
     return score
 
-def normaliser_scores(df, score_col='score_brut'):
-    min_score = df[score_col].min()
-    max_score = df[score_col].max()
+def classer_chevaux_plat(df):
+    df['score_brut'] = df.apply(calculer_score_plat, axis=1)
+    # Normalisation
+    min_score = df['score_brut'].min()
+    max_score = df['score_brut'].max()
     if max_score - min_score > 0:
-        df['score_normalise'] = (df[score_col] - min_score) / (max_score - min_score)
+        df['score_normalise'] = (df['score_brut'] - min_score) / (max_score - min_score)
     else:
         df['score_normalise'] = 0.5
-    return df
-
-def classer_chevaux(df):
-    df['score_brut'] = df.apply(calculer_score_cheval, axis=1)
-    df = normaliser_scores(df)
     df = df.sort_values('score_normalise', ascending=False).reset_index(drop=True)
     df['rang'] = df.index + 1
     return df
 
 # ------------------------------------------------------------
-# Fonctions de pronostics
+# Fonctions de pronostics (inchangées)
 # ------------------------------------------------------------
 def generer_top_3(df):
     return df.head(3)[['N°', 'Cheval', 'score_normalise']].to_dict('records')
@@ -292,7 +329,7 @@ def generer_combinaisons_quinte(df, n_combinaisons=10):
     return result
 
 # ------------------------------------------------------------
-# Classes pour l'extraction intelligente (avec fallback)
+# Extraction intelligente avec OCR
 # ------------------------------------------------------------
 class IntelligentTableDetector:
     def __init__(self):
@@ -302,7 +339,6 @@ class IntelligentTableDetector:
     def detect_table_regions(self, image):
         if not self.use_ai:
             return []
-        # Redimensionner si nécessaire
         max_size = 800
         if max(image.size) > max_size:
             image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
@@ -321,47 +357,7 @@ class IntelligentTableDetector:
     def crop_table(self, image, bbox):
         return image.crop(bbox)
 
-def detect_table_structure_fallback(text_boxes):
-    """Version simple de détection de structure (sans classification)"""
-    if not text_boxes:
-        return pd.DataFrame()
-    text_boxes.sort(key=lambda x: x['y'])
-    heights = [box['y_max'] - box['y_min'] for box in text_boxes]
-    avg_height = np.mean(heights) if heights else 20
-    line_threshold = avg_height * 0.6
-    lines = []
-    current_line = []
-    current_y = None
-    for box in text_boxes:
-        if current_y is None or abs(box['y'] - current_y) < line_threshold:
-            current_line.append(box)
-            current_y = box['y']
-        else:
-            lines.append(sorted(current_line, key=lambda x: x['x']))
-            current_line = [box]
-            current_y = box['y']
-    if current_line:
-        lines.append(sorted(current_line, key=lambda x: x['x']))
-    if not lines:
-        return pd.DataFrame()
-    header_line = lines[0]
-    columns = [item['text'] for item in header_line]
-    data_lines = lines[1:]
-    data_rows = []
-    for line in data_lines:
-        row = {}
-        for item in line:
-            best_col_idx = min(range(len(columns)), key=lambda i: abs(item['x'] - header_line[i]['x']))
-            row[columns[best_col_idx]] = item['text']
-        data_rows.append(row)
-    df = pd.DataFrame(data_rows)
-    cols_present = [c for c in columns if c in df.columns]
-    if cols_present:
-        df = df[cols_present]
-    return df
-
 def intelligent_table_extraction(image):
-    """Extraction avec détection IA si possible, sinon OCR classique"""
     detector = IntelligentTableDetector()
     reader = load_ocr_reader()
     if detector.use_ai:
@@ -407,7 +403,7 @@ def intelligent_table_extraction(image):
 # Interface Streamlit
 # ------------------------------------------------------------
 st.title("🐎 Application de Pronostics Hippiques IA")
-st.markdown("### Version avec intelligence artificielle pour une extraction précise des données")
+st.markdown("### Version optimisée pour les courses de plat")
 
 st.sidebar.title("⚙️ Configuration")
 use_ai_detection = st.sidebar.checkbox("Utiliser la détection IA (si disponible)", value=True)
@@ -441,7 +437,6 @@ if st.button("🔍 Analyser avec IA", type="primary") and uploaded_files:
             if use_ai_detection:
                 tables = intelligent_table_extraction(image)
             else:
-                # Méthode simple (OCR direct)
                 reader = load_ocr_reader()
                 results = reader.readtext(np.array(image))
                 text_boxes = []
@@ -462,7 +457,7 @@ if st.button("🔍 Analyser avec IA", type="primary") and uploaded_files:
             all_tables.extend(tables)
             progress_bar.progress((idx+1)/len(uploaded_files))
         
-        # Prendre le premier tableau non vide (on suppose que c'est la table des partants)
+        # Prendre le premier tableau non vide
         df_final = None
         for table in all_tables:
             if table['dataframe'] is not None and not table['dataframe'].empty:
@@ -472,13 +467,21 @@ if st.button("🔍 Analyser avec IA", type="primary") and uploaded_files:
         if df_final is None or df_final.empty:
             st.error("Aucune donnée valide n'a pu être extraite. Vérifiez vos images.")
         else:
-            # Nettoyage basique (en supposant que c'est une table partants)
-            df_final = clean_dataframe(df_final, 'partants')
-            if 'N°' not in df_final.columns:
-                st.warning("La colonne N° n'a pas été détectée. Utilisation de l'index comme numéro.")
+            # Déterminer le type de tableau et nettoyer
+            table_type = detect_table_type(df_final)
+            if table_type == 'plat':
+                df_final = clean_dataframe_plat(df_final)
+                # S'assurer que la colonne N° existe
+                if 'N°' not in df_final.columns:
+                    df_final['N°'] = range(1, len(df_final)+1)
+                # Classer
+                df_final = classer_chevaux_plat(df_final)
+            else:
+                st.warning("Type de tableau non reconnu, utilisation du scoring par défaut (tous les scores à 0.5).")
                 df_final['N°'] = range(1, len(df_final)+1)
+                df_final['score_normalise'] = 0.5
+                df_final['rang'] = range(1, len(df_final)+1)
             
-            df_final = classer_chevaux(df_final)
             st.session_state.df_final = df_final
             st.session_state.data_loaded = True
             
@@ -493,7 +496,7 @@ if st.session_state.data_loaded and st.session_state.df_final is not None:
     
     st.subheader("📊 Données extraites et scores")
     # Afficher les colonnes disponibles
-    cols_afficher = ['N°', 'Cheval', 'Driver', 'Entraîneur', 'Gains', 'score_normalise', 'rang']
+    cols_afficher = ['N°', 'Cheval', 'Jockey', 'Entraîneur', 'Valeur', 'Score_musique', 'score_normalise', 'rang']
     cols_afficher = [c for c in cols_afficher if c in df.columns]
     st.dataframe(df[cols_afficher])
     

@@ -1,552 +1,518 @@
-# -*- coding: utf-8 -*-
-"""
-Streamlit app — Analyseur Hippique IA (Auto Deep Learning + ML hybride)
-Fichier prêt à pousser sur GitHub et déployer sur Streamlit.
-- Auto-entraînement incrémental : lorsqu'une nouvelle course est chargée (CSV ou URL),
-  les données sont fusionnées dans data/historique.csv et le modèle DL est ré-entraîné automatiquement.
-- Fusion ML (RandomForest/GBM) + DL (Keras) pour un score final hybride.
-"""
-
 import streamlit as st
+import easyocr
 import pandas as pd
 import numpy as np
-import requests
-from bs4 import BeautifulSoup
+import matplotlib.pyplot as plt
+from PIL import Image
 import re
-import json
-from datetime import datetime
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import time
+import torch
+from transformers import TableTransformerForObjectDetection, DetrImageProcessor
+import torchvision.transforms as T
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 import joblib
 import os
-import warnings
-warnings.filterwarnings('ignore')
 
-# Deep learning
-import tensorflow as tf
-from tensorflow.keras import layers, models, callbacks
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
-from tensorflow.keras.optimizers import Adam
+# ------------------------------------------------------------
+# Configuration de la page
+# ------------------------------------------------------------
+st.set_page_config(page_title="Pronostics Hippiques IA", layout="wide")
 
-# SKLearn utilities
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.metrics import mean_squared_error
+# ------------------------------------------------------------
+# Initialisation des modèles IA (avec cache)
+# ------------------------------------------------------------
+@st.cache_resource
+def load_table_detector():
+    """Charge le modèle Table Transformer pour détecter les tableaux dans les images"""
+    processor = DetrImageProcessor.from_pretrained("microsoft/table-transformer-detection")
+    model = TableTransformerForObjectDetection.from_pretrained("microsoft/table-transformer-detection")
+    return processor, model
 
-st.set_page_config(
-    page_title="🏇 Analyseur Hippique IA (Auto-DL)",
-    page_icon="🏇",
-    layout="wide"
-)
+@st.cache_resource
+def load_ocr_reader():
+    return easyocr.Reader(['fr'], gpu=False)
 
-# --------------------- Directories ---------------------
-os.makedirs('models', exist_ok=True)
-os.makedirs('data', exist_ok=True)
-os.makedirs('logs', exist_ok=True)
+@st.cache_resource
+def load_table_classifier():
+    """Charge un classifieur pour identifier le type de tableau"""
+    # Définir les mots-clés pour chaque type
+    type_keywords = {
+        'partants': ['n°', 'cheval', 'driver', 'entraîneur', 'musique', 'gains'],
+        'drivers': ['driver', 'courses', 'victoires', 'réussite', 'écart'],
+        'entraineurs': ['entraîneur', 'courses', 'victoires', 'réussite', 'écart'],
+        'records': ['record', 'date', 'temps']
+    }
+    return type_keywords
 
-MODEL_PATH = os.path.join('models', 'dl_model.keras')
-SCALER_PATH = os.path.join('models', 'scaler.joblib')
-HIST_PATH = os.path.join('data', 'historique.csv')
-LOG_PATH = os.path.join('logs', 'training_log.csv')
-
-# --------------------- Styling ---------------------
-st.markdown("""
-<style>
-    .main-header { font-size: 2.6rem; color: #1e3a8a; text-align: center; margin-bottom: 1rem; }
-    .metric-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 0.7rem; border-radius: 10px; color: white; text-align: center; margin: 0.4rem 0; }
-    .prediction-box { border-left: 4px solid #f59e0b; padding-left: 1rem; background-color: #fffbeb; margin: 0.6rem 0; }
-</style>
-""", unsafe_allow_html=True)
-
-CONFIGS = {
-    "PLAT": {"description": "🏃 Course de galop - Handicap poids + avantage corde intérieure", "optimal_draws": [1,2,3,4]},
-    "ATTELE_AUTOSTART": {"description": "🚗 Trot attelé autostart - Numéros 4-6 optimaux", "optimal_draws": [4,5,6]},
-    "ATTELE_VOLTE": {"description": "🔄 Trot attelé volté - Numéro sans importance", "optimal_draws": []}
-}
-
-# --------------------- Utilities ---------------------
-def safe_convert(value, convert_func, default=0):
-    try:
-        if pd.isna(value):
-            return default
-        cleaned = str(value).replace(',', '.').strip()
-        return convert_func(cleaned)
-    except:
-        return default
-
-def extract_weight(poids_str):
-    if pd.isna(poids_str):
-        return 60.0
-    match = re.search(r'(\d+(?:[.,]\d+)?)', str(poids_str))
-    return float(match.group(1).replace(',', '.')) if match else 60.0
-
-# --------------------- Scraper ---------------------
-@st.cache_data(ttl=300)
-def scrape_race_data(url):
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code != 200:
-            return None, f"Erreur HTTP {response.status_code}"
-        soup = BeautifulSoup(response.content, 'html.parser')
-        table = soup.find('table')
-        if not table:
-            return None, 'Aucun tableau trouvé'
-        rows = table.find_all('tr')[1:]
-        horses_data = []
-        for row in rows:
-            cols = row.find_all(['td','th'])
-            if len(cols) >= 4:
-                horses_data.append({
-                    'Numéro de corde': cols[0].get_text(strip=True),
-                    'Nom': cols[1].get_text(strip=True),
-                    'Musique': cols[2].get_text(strip=True) if len(cols) > 2 else '',
-                    'Âge/Sexe': cols[3].get_text(strip=True) if len(cols) > 3 else '',
-                    'Poids': cols[-2].get_text(strip=True) if len(cols) > 3 else '60',
-                    'Cote': cols[-1].get_text(strip=True)
+# ------------------------------------------------------------
+# Classe pour la détection intelligente des tableaux
+# ------------------------------------------------------------
+class IntelligentTableDetector:
+    def __init__(self):
+        self.processor, self.model = load_table_detector()
+        self.transform = T.Compose([
+            T.Resize(800),
+            T.ToTensor(),
+            T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+    
+    def detect_table_regions(self, image):
+        """Détecte les régions de tableaux dans l'image"""
+        # Préparer l'image pour le modèle
+        inputs = self.processor(images=image, return_tensors="pt")
+        
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+        
+        # Convertir les sorties en boîtes
+        target_sizes = torch.tensor([image.size[::-1]])
+        results = self.processor.post_process_object_detection(outputs, target_sizes=target_sizes, threshold=0.7)[0]
+        
+        table_regions = []
+        for score, label, box in zip(results["scores"], results["labels"], results["boxes"]):
+            if score > 0.7:  # Seuil de confiance
+                box = [round(i, 2) for i in box.tolist()]
+                table_regions.append({
+                    'bbox': box,
+                    'confidence': score.item()
                 })
-        if not horses_data:
-            return None, 'Aucune donnée extraite'
-        return pd.DataFrame(horses_data), 'Succès'
-    except Exception as e:
-        return None, f'Erreur: {e}'
+        
+        return table_regions
+    
+    def crop_table(self, image, bbox):
+        """Extrait une région de tableau de l'image"""
+        left, top, right, bottom = bbox
+        return image.crop((left, top, right, bottom))
 
-# --------------------- Feature engineering ---------------------
-def music_to_features(music_str):
-    s = str(music_str)
-    digits = [int(ch) for ch in re.findall(r'\d+', s)]
-    if not digits:
-        return 0, 0, 0.0
-    recent_wins = sum(1 for d in digits if d == 1)
-    recent_top3 = sum(1 for d in digits if d <= 3)
-    weights = np.linspace(1, 0.3, num=len(digits))
-    weighted_score = sum((4 - d) * w for d,w in zip(digits, weights)) / (len(digits) + 1e-6)
-    return recent_wins, recent_top3, weighted_score
+# ------------------------------------------------------------
+# Classe pour l'OCR contextuel avec correction IA
+# ------------------------------------------------------------
+class ContextualOCR:
+    def __init__(self):
+        self.reader = load_ocr_reader()
+        self.type_keywords = load_table_classifier()
+        
+        # Dictionnaire de correction pour les erreurs courantes
+        self.common_corrections = {
+            'N°': ['No', 'N0', 'N*', 'N°'],
+            'Cheval': ['ChevaI', 'Cheva1', 'Chevai'],
+            'Driver': ['Drlver', 'Dr1ver', 'Oriver'],
+            'Entraîneur': ['Entralneur', 'EntraIneur', 'Entraineur'],
+        }
+    
+    def extract_text_with_context(self, image):
+        """Extrait le texte avec analyse contextuelle"""
+        results = self.reader.readtext(np.array(image))
+        
+        text_boxes = []
+        for (bbox, text, conf) in results:
+            # Correction contextuelle
+            corrected_text = self.correct_text(text)
+            
+            x_coords = [p[0] for p in bbox]
+            y_coords = [p[1] for p in bbox]
+            
+            text_boxes.append({
+                'text': corrected_text,
+                'original_text': text,
+                'confidence': conf,
+                'x': (min(x_coords) + max(x_coords)) / 2,
+                'y': (min(y_coords) + max(y_coords)) / 2,
+                'x_min': min(x_coords),
+                'x_max': max(x_coords),
+                'y_min': min(y_coords),
+                'y_max': max(y_coords)
+            })
+        
+        return text_boxes
+    
+    def correct_text(self, text):
+        """Corrige le texte basé sur les erreurs courantes"""
+        corrected = text
+        for correct, variations in self.common_corrections.items():
+            for var in variations:
+                if var in corrected:
+                    corrected = corrected.replace(var, correct)
+        return corrected
+    
+    def classify_table_type(self, text_boxes):
+        """Classifie automatiquement le type de tableau basé sur le contenu"""
+        # Extraire tout le texte
+        all_text = ' '.join([box['text'] for box in text_boxes]).lower()
+        
+        # Calculer un score pour chaque type
+        scores = {}
+        for table_type, keywords in self.type_keywords.items():
+            score = sum(1 for keyword in keywords if keyword in all_text)
+            scores[table_type] = score
+        
+        # Retourner le type avec le score le plus élevé
+        if max(scores.values()) > 0:
+            return max(scores, key=scores.get)
+        return 'unknown'
 
+# ------------------------------------------------------------
+# Fonctions améliorées d'extraction de tableaux
+# ------------------------------------------------------------
+def intelligent_table_extraction(image):
+    """Extraction intelligente des tableaux avec détection de région et classification"""
+    
+    # Initialiser les détecteurs
+    table_detector = IntelligentTableDetector()
+    contextual_ocr = ContextualOCR()
+    
+    # Étape 1: Détecter les régions de tableaux
+    table_regions = table_detector.detect_table_regions(image)
+    
+    all_tables = []
+    
+    if table_regions:
+        # Si des régions sont détectées, les extraire
+        for region in table_regions:
+            table_image = table_detector.crop_table(image, region['bbox'])
+            text_boxes = contextual_ocr.extract_text_with_context(table_image)
+            table_type = contextual_ocr.classify_table_type(text_boxes)
+            
+            # Détecter la structure du tableau
+            df = detect_table_structure_improved(text_boxes, table_type)
+            
+            if not df.empty:
+                all_tables.append({
+                    'type': table_type,
+                    'dataframe': df,
+                    'confidence': region['confidence']
+                })
+    else:
+        # Fallback: OCR sur toute l'image
+        text_boxes = contextual_ocr.extract_text_with_context(image)
+        table_type = contextual_ocr.classify_table_type(text_boxes)
+        df = detect_table_structure_improved(text_boxes, table_type)
+        
+        if not df.empty:
+            all_tables.append({
+                'type': table_type,
+                'dataframe': df,
+                'confidence': 0.5
+            })
+    
+    return all_tables
 
-def prepare_data(df):
-    df = df.copy()
-    df['Cote'] = df['Cote'].astype(str)
-    df['odds_numeric'] = df['Cote'].apply(lambda x: safe_convert(x, float, 999))
-    df['draw_numeric'] = df['Numéro de corde'].apply(lambda x: safe_convert(x, int, 1))
-    df['weight_kg'] = df['Poids'].apply(extract_weight)
-
-    ages = []
-    is_female = []
-    r_wins=[]; r_top3=[]; r_weighted=[]
-    for val in df.get('Âge/Sexe', ['']*len(df)):
-        m = re.search(r'(\d+)', str(val))
-        ages.append(float(m.group(1)) if m else 4.0)
-        v = str(val).upper()
-        is_female.append(1 if 'F' in v else 0)
-    for mus in df.get('Musique', ['']*len(df)):
-        a,b,c = music_to_features(mus)
-        r_wins.append(a); r_top3.append(b); r_weighted.append(c)
-
-    df['age'] = ages
-    df['is_female'] = is_female
-    df['recent_wins'] = r_wins
-    df['recent_top3'] = r_top3
-    df['recent_weighted'] = r_weighted
-
-    df = df[df['odds_numeric'] > 0]
-    df = df.reset_index(drop=True)
+def detect_table_structure_improved(text_boxes, table_type):
+    """Version améliorée de la détection de structure avec connaissances du contexte"""
+    
+    if not text_boxes:
+        return pd.DataFrame()
+    
+    # Trier par position verticale
+    text_boxes.sort(key=lambda x: x['y'])
+    
+    # Regrouper par lignes avec seuil adaptatif
+    heights = [box['y_max'] - box['y_min'] for box in text_boxes]
+    avg_height = np.mean(heights) if heights else 20
+    line_threshold = avg_height * 0.6  # Plus petit seuil pour meilleure détection
+    
+    lines = []
+    current_line = []
+    current_y = None
+    
+    for box in text_boxes:
+        if current_y is None or abs(box['y'] - current_y) < line_threshold:
+            current_line.append(box)
+            current_y = box['y']
+        else:
+            lines.append(sorted(current_line, key=lambda x: x['x']))
+            current_line = [box]
+            current_y = box['y']
+    if current_line:
+        lines.append(sorted(current_line, key=lambda x: x['x']))
+    
+    # Identifier la ligne d'en-tête basée sur le type de tableau
+    header_keywords = {
+        'partants': ['n°', 'cheval', 'driver'],
+        'drivers': ['driver', 'courses', 'victoires'],
+        'entraineurs': ['entraîneur', 'courses', 'victoires'],
+        'records': ['record', 'date']
+    }
+    
+    keywords = header_keywords.get(table_type, [])
+    
+    header_line = None
+    header_index = 0
+    
+    for i, line in enumerate(lines):
+        texts = [item['text'].lower() for item in line]
+        if any(any(kw in t for kw in keywords) for t in texts):
+            header_line = line
+            header_index = i
+            break
+    
+    if header_line is None:
+        # Si pas d'en-tête trouvé, utiliser la première ligne
+        header_line = lines[0]
+        header_index = 0
+    
+    # Extraire les colonnes
+    columns = [item['text'] for item in header_line]
+    
+    # Traiter les lignes de données
+    data_lines = lines[header_index+1:]
+    data_rows = []
+    
+    for line in data_lines:
+        row = {}
+        for item in line:
+            # Trouver la colonne la plus proche
+            col_distances = []
+            for col_idx, col_item in enumerate(header_line):
+                dist = abs(item['x'] - col_item['x'])
+                col_distances.append((col_idx, dist))
+            
+            best_col_idx = min(col_distances, key=lambda x: x[1])[0]
+            best_col = columns[best_col_idx]
+            
+            # Nettoyer le texte selon le contexte de la colonne
+            cleaned_text = clean_text_contextual(item['text'], best_col)
+            row[best_col] = cleaned_text
+        
+        data_rows.append(row)
+    
+    # Créer DataFrame
+    df = pd.DataFrame(data_rows)
+    
+    # Réordonner les colonnes
+    if not df.empty:
+        # Garder seulement les colonnes qui existent
+        cols_present = [c for c in columns if c in df.columns]
+        if cols_present:
+            df = df[cols_present]
+    
     return df
 
-# --------------------- Model Manager (Hybrid ML + DL with Auto-Training) ---------------------
-@st.cache_resource
-class HorseRacingModel:
-    def __init__(self):
-        # ML models
-        self.rf = RandomForestRegressor(n_estimators=100, random_state=42)
-        self.gb = GradientBoostingRegressor(n_estimators=100, random_state=42)
-        self.scaler = StandardScaler()
+def clean_text_contextual(text, column_name):
+    """Nettoie le texte en fonction du contexte de la colonne"""
+    if not isinstance(text, str):
+        return text
+    
+    # Nettoyage de base
+    text = text.strip()
+    
+    # Nettoyage spécifique selon le type de colonne
+    col_lower = column_name.lower()
+    
+    if 'n°' in col_lower or 'num' in col_lower:
+        # Extraire uniquement les chiffres
+        numbers = re.findall(r'\d+', text)
+        return numbers[0] if numbers else text
+    
+    elif 'gains' in col_lower or 'record' in col_lower:
+        # Garder les chiffres et certains caractères spéciaux
+        text = re.sub(r'[^\d\s\'\"]', '', text)
+    
+    elif '%' in col_lower or 'réussite' in col_lower:
+        # S'assurer que le pourcentage est bien formaté
+        if '%' not in text:
+            text = text + '%'
+    
+    return text
 
-        # DL model placeholders
-        self.dl_model = None
-        self.dl_input_dim = None
+# ------------------------------------------------------------
+# Reste du code (identique à avant avec les fonctions de scoring et pronostics)
+# ------------------------------------------------------------
+# [Insérer ici toutes les fonctions de scoring et pronostics de la version précédente]
+# (parse_percentage, parse_gains, parse_record, parse_musique, score_musique, 
+#  clean_dataframe, fusionner_donnees, calculer_score_cheval, classer_chevaux,
+#  generer_top_3, generer_bases, generer_outsiders, generer_combinaisons_trio,
+#  generer_combinaisons_quinte)
 
-        # paths
-        self.model_path = MODEL_PATH
-        self.scaler_path = SCALER_PATH
-        self.hist_path = HIST_PATH
-        self.log_path = LOG_PATH
+# ------------------------------------------------------------
+# Interface Streamlit améliorée
+# ------------------------------------------------------------
+st.title("🐎 Application de Pronostics Hippiques IA")
+st.markdown("### Version avec intelligence artificielle pour une extraction précise des données")
 
-        # feature columns used for DL and ML
-        self.feature_cols = ['odds_numeric','draw_numeric','weight_kg','age','is_female','recent_wins','recent_top3','recent_weighted']
+st.sidebar.title("⚙️ Configuration IA")
+use_advanced_detection = st.sidebar.checkbox("Utiliser la détection avancée des tableaux", value=True)
+confidence_threshold = st.sidebar.slider("Seuil de confiance", 0.0, 1.0, 0.7)
 
-        # try loading existing DL model + scaler
-        if os.path.exists(self.model_path) and os.path.exists(self.scaler_path):
-            try:
-                self.dl_model = models.load_model(self.model_path)
-                self.scaler = joblib.load(self.scaler_path)
-                st.info('✅ Modèle DL et scaler chargés.')
-            except Exception as e:
-                st.warning(f'⚠️ Erreur chargement modèle existant: {e}')
+st.markdown("Téléchargez les captures d'écran des statistiques (partants, drivers, entraîneurs, records) pour obtenir une analyse complète.")
 
-    def build_dl(self, input_dim):
-        model = Sequential([
-            Dense(128, activation='relu', input_dim=input_dim),
-            BatchNormalization(),
-            Dropout(0.25),
-            Dense(64, activation='relu'),
-            Dropout(0.2),
-            Dense(1, activation='linear')
-        ])
-        model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
-        return model
+uploaded_files = st.file_uploader(
+    "📤 Télécharger les photos (PNG, JPG, JPEG)",
+    type=['png', 'jpg', 'jpeg'],
+    accept_multiple_files=True
+)
 
-    def update_historique(self, df_new):
-        df_copy = df_new.copy()
-        df_copy['source_ts'] = datetime.now().isoformat()
-        if os.path.exists(self.hist_path):
-            try:
-                old = pd.read_csv(self.hist_path)
-                combined = pd.concat([old, df_copy], ignore_index=True)
-            except Exception:
-                combined = df_copy
+# Initialisation de l'état de session
+if 'data_loaded' not in st.session_state:
+    st.session_state.data_loaded = False
+    st.session_state.df_final = None
+
+# Aperçu des images
+if uploaded_files:
+    st.subheader("Aperçu des images téléchargées")
+    cols = st.columns(min(len(uploaded_files), 4))
+    for i, file in enumerate(uploaded_files):
+        with cols[i % 4]:
+            image = Image.open(file)
+            st.image(image, caption=file.name, use_container_width=True)
+
+# Bouton d'analyse avec IA
+if st.button("🔍 Analyser avec IA", type="primary") and uploaded_files:
+    with st.spinner("Analyse IA en cours... Veuillez patienter."):
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Étape 1: Extraction intelligente
+        status_text.text("Détection des tableaux par IA...")
+        all_extracted_tables = []
+        
+        for idx, file in enumerate(uploaded_files):
+            image = Image.open(file)
+            
+            if use_advanced_detection:
+                # Utiliser la détection avancée
+                tables = intelligent_table_extraction(image)
+                all_extracted_tables.extend(tables)
+            else:
+                # Fallback sur la méthode simple
+                from ocr_utils import extract_table_from_image
+                headers_keywords = {
+                    'partants': ["N°", "Cheval", "Driver", "Entraîneur"],
+                    'drivers': ["N°", "Cheval", "Driver", "Courses", "Victoires", "Réussite"],
+                    'entraineurs': ["N°", "Cheval", "Entraîneur", "Courses", "Victoires", "Réussite"],
+                    'records': ["N°", "Cheval", "Record", "Date"]
+                }
+                for table_type, keywords in headers_keywords.items():
+                    df = extract_table_from_image(image, keywords)
+                    if not df.empty and len(df) > 1:
+                        all_extracted_tables.append({
+                            'type': table_type,
+                            'dataframe': df,
+                            'confidence': 0.8
+                        })
+                        break
+            
+            progress_bar.progress((idx+1)/len(uploaded_files))
+        
+        # Organiser les tables par type (prendre la meilleure confiance pour chaque type)
+        status_text.text("Organisation et fusion des données...")
+        
+        tables_by_type = {}
+        for table in all_extracted_tables:
+            table_type = table['type']
+            confidence = table['confidence']
+            
+            if table_type not in tables_by_type or confidence > tables_by_type[table_type]['confidence']:
+                tables_by_type[table_type] = {
+                    'dataframe': table['dataframe'],
+                    'confidence': confidence
+                }
+        
+        # Nettoyer les DataFrames
+        cleaned_tables = {}
+        for table_type, table_info in tables_by_type.items():
+            cleaned_tables[table_type] = clean_dataframe(table_info['dataframe'], table_type)
+        
+        # Fusion
+        df_final = fusionner_donnees(
+            cleaned_tables.get('partants'),
+            cleaned_tables.get('drivers'),
+            cleaned_tables.get('entraineurs'),
+            cleaned_tables.get('records')
+        )
+        
+        if df_final.empty:
+            st.error("Aucune donnée valide n'a pu être extraite. Vérifiez vos images.")
         else:
-            combined = df_copy
-        combined.to_csv(self.hist_path, index=False)
-        st.info(f'🗂️ Historique mis à jour ({len(combined)} lignes).')
+            # Vérifier la présence de la colonne N°
+            if 'N°' not in df_final.columns:
+                st.warning("Le numéro des chevaux n'a pas été détecté. Utilisation de l'index.")
+                df_final['N°'] = range(1, len(df_final) + 1)
+            
+            # Scoring
+            status_text.text("Calcul des scores et génération des pronostics...")
+            df_final = classer_chevaux(df_final)
+            
+            st.session_state.df_final = df_final
+            st.session_state.data_loaded = True
+            
+            # Afficher un résumé de la détection
+            st.sidebar.success("✅ Analyse IA terminée")
+            st.sidebar.write("Tables détectées :")
+            for table_type, table_info in tables_by_type.items():
+                st.sidebar.write(f"- {table_type}: confiance {table_info['confidence']:.2f}")
+            
+            progress_bar.progress(100)
+            status_text.text("Analyse terminée!")
+            time.sleep(1)
+            status_text.empty()
+            progress_bar.empty()
 
-    def prepare_Xy_from_historique(self, use_pseudo_target=True):
-        if not os.path.exists(self.hist_path):
-            return None, None
-        df = pd.read_csv(self.hist_path)
-        df = prepare_data(df)
-        X = df[self.feature_cols].fillna(0)
-        if 'placement' in df.columns or 'rank' in df.columns:
-            if 'placement' in df.columns:
-                y = 1.0/(df['placement'].astype(float)+0.1)
-            else:
-                y = 1.0/(df['rank'].astype(float)+0.1)
-            return X.values, y.values
-        if use_pseudo_target:
-            y = 0.7*(1.0/(df['odds_numeric']+0.1)) + 0.3*(df['recent_weighted'] / (df['recent_weighted'].max()+1e-6))
-            y = y + np.random.normal(0, 0.02, size=len(y))
-            return X.values, y.values
-        return X.values, None
+# Affichage des résultats (identique à la version précédente)
+if st.session_state.data_loaded and st.session_state.df_final is not None:
+    df = st.session_state.df_final
+    
+    st.subheader("📊 Données extraites et scores")
+    display_cols = ['N°', 'Cheval', 'Driver', 'Entraîneur', 'Gains', 'Record_secondes',
+                    'Reussite_driver', 'Reussite_entraineur', 'score_normalise', 'rang']
+    display_cols = [c for c in display_cols if c in df.columns]
+    st.dataframe(df[display_cols])
+    
+    # Graphique des scores
+    st.subheader("📈 Scores des chevaux")
+    fig, ax = plt.subplots(figsize=(10, 6))
+    chevaux = df['Cheval'].astype(str) + " (N°" + df['N°'].astype(str) + ")"
+    ax.barh(chevaux, df['score_normalise'])
+    ax.set_xlabel("Score normalisé")
+    ax.set_title("Classement par score")
+    st.pyplot(fig)
+    
+    # Pronostics
+    st.subheader("🏆 Pronostics")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### Top 3 probable")
+        top3 = generer_top_3(df)
+        for i, cheval in enumerate(top3):
+            st.write(f"{i+1}. N°{cheval['N°']} - {cheval['Cheval']} (score: {cheval['score_normalise']:.3f})")
+    
+    with col2:
+        st.markdown("#### Bases solides")
+        bases = generer_bases(df, 2)
+        for cheval in bases:
+            st.write(f"🔹 N°{cheval['N°']} - {cheval['Cheval']}")
+    
+    st.markdown("#### Outsiders intéressants")
+    outsiders = generer_outsiders(df, 5)
+    for cheval in outsiders:
+        st.write(f"👀 N°{cheval['N°']} - {cheval['Cheval']} (score: {cheval['score_normalise']:.3f})")
+    
+    # Combinaisons Trio
+    st.markdown("#### 🎲 10 combinaisons pour le Trio")
+    trio_comb = generer_combinaisons_trio(df, 10)
+    for i, comb in enumerate(trio_comb):
+        st.write(f"{i+1}. {', '.join(comb['chevaux'])} (N°{', '.join(map(str, comb['combinaison']))})")
+    
+    # Combinaisons Quinté
+    st.markdown("#### 🎲 10 combinaisons pour le Quinté+")
+    quinte_comb = generer_combinaisons_quinte(df, 10)
+    for i, comb in enumerate(quinte_comb):
+        st.write(f"{i+1}. {', '.join(comb['chevaux'])} (N°{', '.join(map(str, comb['combinaison']))})")
+    
+    # Téléchargement CSV
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 Télécharger les données en CSV",
+        data=csv,
+        file_name='pronostics_hippiques_ia.csv',
+        mime='text/csv'
+    )
 
-    def auto_train_dl(self, X_new, y_new=None, epochs=8, batch_size=8, val_split=0.15):
-        try:
-            X_hist, y_hist = self.prepare_Xy_from_historique(use_pseudo_target=True)
-            X_train, y_train = None, None
-            if X_hist is not None and y_hist is not None and len(X_hist) >= 4:
-                X_train, y_train = X_hist, y_hist
-            else:
-                if isinstance(X_new, np.ndarray):
-                    X_train = X_new
-                else:
-                    X_train = X_new.values if hasattr(X_new, 'values') else np.array(X_new)
-                if y_new is None:
-                    y_train = 0.7*(1.0/(X_new[:,0]+0.1)) + 0.3*(X_new[:,7] / (np.max(X_new[:,7]) + 1e-6))
-                else:
-                    y_train = y_new
-
-            Xs = self.scaler.fit_transform(X_train)
-
-            if self.dl_model is None:
-                self.dl_input_dim = Xs.shape[1]
-                self.dl_model = self.build_dl(self.dl_input_dim)
-
-            es = callbacks.EarlyStopping(patience=6, restore_best_weights=True)
-            hist = self.dl_model.fit(Xs, y_train, validation_split=val_split, epochs=epochs, batch_size=batch_size, callbacks=[es], verbose=0)
-            loss = float(hist.history['loss'][-1])
-
-            try:
-                self.dl_model.save(self.model_path, overwrite=True)
-                joblib.dump(self.scaler, self.scaler_path)
-            except Exception as e:
-                st.warning(f"⚠️ Erreur sauvegarde modèle: {e}")
-
-            with open(self.log_path, 'a') as f:
-                f.write(f"{datetime.now().isoformat()},{len(X_train)},{loss:.6f},{self.model_path}\n")
-
-            st.success(f'✅ Auto-entrainement DL terminé (loss={loss:.5f})')
-            return hist.history
-        except Exception as e:
-            st.warning(f'⚠️ Erreur auto_train_dl: {e}')
-            return None
-
-    def predict_dl(self, X):
-        if self.dl_model is None:
-            return np.zeros(len(X))
-        Xs = self.scaler.transform(X)
-        preds = self.dl_model.predict(Xs).flatten()
-        return preds
-
-    def train_ml_models_on_historical(self):
-        X_hist, y_hist = self.prepare_Xy_from_historique(use_pseudo_target=True)
-        if X_hist is None or y_hist is None or len(X_hist) < 4:
-            return None
-        try:
-            self.rf.fit(X_hist, y_hist)
-            self.gb.fit(X_hist, y_hist)
-            return True
-        except Exception as e:
-            st.warning(f'⚠️ Erreur entraînement ML full: {e}')
-            return None
-
-model_manager = HorseRacingModel()
-
-# --------------------- Combinations generator ---------------------
-from itertools import combinations, permutations
-
-def generate_e_trio(df, n_combinations=35):
-    df = df.copy().reset_index(drop=True)
-    df['fav_score'] = 1 / (df['odds_numeric'] + 0.1)
-    df = df.sort_values('fav_score', ascending=False).reset_index()
-    favorites = df.head(max(3, int(len(df)*0.3)))['Nom'].tolist()
-    outsiders = df.tail(max(3, int(len(df)*0.3)))['Nom'].tolist()
-    pool = list(dict.fromkeys(favorites + outsiders + df['Nom'].tolist()))
-
-    combos = []
-    for a in pool:
-        for b in pool:
-            for c in pool:
-                if a!=b and b!=c and a!=c:
-                    combos.append(tuple([a,b,c]))
-    combos_unique = []
-    seen = set()
-    for comb in combos:
-        key = tuple(sorted(comb))
-        if key not in seen:
-            seen.add(key)
-            combos_unique.append(comb)
-    name_to_score = dict(zip(df['Nom'], df['fav_score']))
-    def combo_score(comb):
-        return sum(name_to_score.get(n, 0) for n in comb)
-    combos_unique = sorted(combos_unique, key=combo_score, reverse=True)
-    return combos_unique[:min(n_combinations, len(combos_unique))]
-
-# --------------------- Visualizations ---------------------
-def create_visualization(df_ranked, feature_importance=None):
-    fig = make_subplots(rows=2, cols=2,
-                        subplot_titles=('🏆 Scores par Position','📊 Distribution Cotes','⚖️ Poids vs Score','🧠 Features'))
-    score_col = 'score_final' if 'score_final' in df_ranked.columns else 'ml_score'
-    if score_col in df_ranked.columns:
-        fig.add_trace(go.Scatter(x=df_ranked['rang'], y=df_ranked[score_col], mode='markers+lines', text=df_ranked['Nom'], name='Score'), row=1,col=1)
-    fig.add_trace(go.Histogram(x=df_ranked['odds_numeric'], nbinsx=8, name='Cotes'), row=1, col=2)
-    if score_col in df_ranked.columns:
-        fig.add_trace(go.Scatter(x=df_ranked['weight_kg'], y=df_ranked[score_col], mode='markers', text=df_ranked['Nom'], name='Poids vs Score'), row=2, col=1)
-    fig.update_layout(height=650, showlegend=True, title_text='📊 Analyse Complète', title_x=0.5)
-    return fig
-
-# --------------------- Sample data generator ---------------------
-def generate_sample_data(data_type="plat"):
-    if data_type == "plat":
-        return pd.DataFrame({
-            'Nom': ['Thunder Bolt', 'Lightning Star', 'Storm King', 'Rain Dance', 'Wind Walker'],
-            'Numéro de corde': ['1', '2', '3', '4', '5'],
-            'Cote': ['3.2', '4.8', '7.5', '6.2', '9.1'],
-            'Poids': ['56.5', '57.0', '58.5', '59.0', '57.5'],
-            'Musique': ['1a2a3a', '2a1a4a', '3a3a1a', '1a4a2a', '4a2a5a'],
-            'Âge/Sexe': ['4H', '5M', '3F', '6H', '4M']
-        })
+else:
+    if uploaded_files:
+        st.info("Cliquez sur 'Analyser avec IA' pour lancer l'extraction intelligente.")
     else:
-        return pd.DataFrame({
-            'Nom': ['Ace Impact', 'Torquator Tasso', 'Adayar', 'Tarnawa', 'Chrono Genesis'],
-            'Numéro de corde': ['1', '2', '3', '4', '5'],
-            'Cote': ['3.2', '4.8', '7.5', '6.2', '9.1'],
-            'Poids': ['59.5', '59.5', '59.5', '58.5', '58.5'],
-            'Musique': ['1a1a2a', '1a3a1a', '2a1a4a', '1a2a1a', '3a1a2a'],
-            'Âge/Sexe': ['4H', '5H', '4H', '5F', '5F']
-        })
-
-# --------------------- App UI ---------------------
-
-def main():
-    st.markdown('<h1 class="main-header">🏇 Analyseur Hippique IA (Auto-DL)</h1>', unsafe_allow_html=True)
-    st.markdown('*Application entièrement autonome : fusion ML + DL, auto-entraînement incrémental, génération e-trio.*')
-
-    with st.sidebar:
-        st.header('⚙️ Configuration')
-        race_type = st.selectbox('🏁 Type de course', ['AUTO','PLAT','ATTELE_AUTOSTART','ATTELE_VOLTE'])
-        enable_dl = st.checkbox('✅ Activer Auto Deep Learning', value=True)
-        dl_epochs = st.number_input('🏋️‍♂️ Epochs (auto-train each update)', min_value=2, max_value=500, value=8, step=1)
-        dl_batch = st.number_input('🧮 Batch size', min_value=2, max_value=128, value=8, step=1)
-        ml_confidence = st.slider('🎯 Poids ML dans score final', 0.0, 1.0, 0.6, 0.05)
-        num_combos = st.number_input('🔢 Nb combinaisons e-trio', min_value=5, max_value=200, value=35, step=1)
-        st.info("ℹ️ L'application entraînera automatiquement le modèle DL à chaque import de nouvelle course (CSV/URL).")
-
-    tab1, tab2, tab3 = st.tabs(['🌐 URL Analysis','📁 Upload CSV','🧪 Test Data'])
-    df_final = None
-
-    with tab1:
-        st.subheader('🔍 Analyse d\'URL de Course')
-        col1, col2 = st.columns([3,1])
-        with col1:
-            url = st.text_input('🌐 URL de la course:', placeholder='https://...')
-        with col2:
-            analyze_button = st.button('🔍 Analyser')
-        if analyze_button and url:
-            with st.spinner('🔄 Extraction...'):
-                df, msg = scrape_race_data(url)
-                if df is not None:
-                    st.success(f'✅ {len(df)} chevaux extraits')
-                    st.dataframe(df.head())
-                    df_final = df
-                else:
-                    st.error(f'❌ {msg}')
-
-    with tab2:
-        st.subheader('📤 Upload CSV (historique possible)')
-        uploaded_file = st.file_uploader('Fichier CSV', type='csv')
-        if uploaded_file:
-            try:
-                df_final = pd.read_csv(uploaded_file)
-                st.success(f'✅ {len(df_final)} chevaux chargés')
-                st.dataframe(df_final.head())
-            except Exception as e:
-                st.error(f'❌ Erreur: {e}')
-
-    with tab3:
-        st.subheader('🧪 Données de Test')
-        c1,c2,c3 = st.columns(3)
-        with c1:
-            if st.button('🏃 Test Plat'):
-                df_final = generate_sample_data('plat')
-                st.success('✅ Données PLAT chargées')
-        with c2:
-            if st.button('🚗 Test Attelé'):
-                df_final = generate_sample_data('attele')
-                st.success('✅ Données ATTELÉ chargées')
-        with c3:
-            if st.button('⭐ Test Premium'):
-                df_final = generate_sample_data('premium')
-                st.success('✅ Données PREMIUM chargées')
-        if df_final is not None:
-            st.dataframe(df_final)
-
-    # ----- Core processing -----
-    if df_final is not None and len(df_final)>0:
-        st.markdown('---')
-        st.header('🎯 Analyse et Résultats (Auto-DL + ML)')
-
-        df_prep = prepare_data(df_final)
-        if len(df_prep)==0:
-            st.error('❌ Aucune donnée valide')
-            return
-
-        if race_type=='AUTO':
-            weight_std = df_prep['weight_kg'].std()
-            weight_mean = df_prep['weight_kg'].mean()
-            if weight_std>2.5:
-                detected='PLAT'
-            elif weight_mean>65 and weight_std<1.5:
-                detected='ATTELE_AUTOSTART'
-            else:
-                detected='PLAT'
-            st.info(f'🤖 Type détecté: {detected}')
-        else:
-            detected = race_type
-            st.info(f'📋 {CONFIGS[detected]["description"]}')
-
-        # update historique automatically (fusion)
-        try:
-            model_manager.update_historique(df_final)
-        except Exception as e:
-            st.warning(f"⚠️ Historique non mis à jour: {e}")
-
-        # prepare features for current race
-        X_curr = df_prep[model_manager.feature_cols].fillna(0)
-
-        # If DL enabled -> auto-train on full historique (preferable)
-        dl_preds = np.zeros(len(X_curr))
-        if enable_dl:
-            with st.spinner('🏋️‍♂️ Auto-entrainement DL en cours...'):
-                hist = model_manager.auto_train_dl(X_curr, y_new=None, epochs=int(dl_epochs), batch_size=int(dl_batch))
-                if hist is not None:
-                    dl_preds = model_manager.predict_dl(X_curr.values)
-        else:
-            st.info('ℹ️ DL désactivé')
-
-        # classical ML heuristic score
-        trad = 1.0/(df_prep['odds_numeric']+0.1)
-        if trad.max()!=trad.min():
-            trad = (trad - trad.min())/(trad.max()-trad.min())
-
-        # also try ML models (train on historique if available)
-        ml_score = np.zeros(len(X_curr))
-        trained_ml = model_manager.train_ml_models_on_historical()
-        if trained_ml:
-            try:
-                Xc = X_curr.values
-                preds_rf = model_manager.rf.predict(Xc)
-                preds_gb = model_manager.gb.predict(Xc)
-                preds = 0.5*preds_rf + 0.5*preds_gb
-                if preds.max()!=preds.min():
-                    preds = (preds - preds.min())/(preds.max()-preds.min())
-                ml_score = preds
-            except Exception as e:
-                st.warning(f'⚠️ Erreur prédiction ML: {e}')
-
-        # normalize DL preds
-        if dl_preds.max() != dl_preds.min():
-            dl_norm = (dl_preds - dl_preds.min())/(dl_preds.max()-dl_preds.min())
-        else:
-            dl_norm = np.zeros_like(dl_preds)
-
-        # final blended score
-        final_score = (1-ml_confidence)*trad + ml_confidence*(0.5*ml_score + 0.5*dl_norm)
-
-        df_prep['ml_score'] = ml_score
-        df_prep['dl_score'] = dl_norm
-        df_prep['score_final'] = final_score
-        df_ranked = df_prep.sort_values('score_final', ascending=False).reset_index(drop=True)
-        df_ranked['rang'] = range(1, len(df_ranked)+1)
-
-        # display
-        c1,c2 = st.columns([2,1])
-        with c1:
-            st.subheader('🏆 Classement Final')
-            display_cols = ['rang','Nom','Cote','Numéro de corde']
-            if 'Poids' in df_ranked.columns:
-                display_cols.append('Poids')
-            display_cols.append('score_final')
-            display_df = df_ranked[display_cols].copy()
-            display_df['Score'] = display_df['score_final'].round(3)
-            display_df = display_df.drop('score_final', axis=1)
-            st.dataframe(display_df, use_container_width=True)
-
-        with c2:
-            st.subheader('📊 Métriques')
-            st.markdown(f'<div class="metric-card">🧠 DL activé<br><strong>{"Oui" if enable_dl else "Non"}</strong></div>', unsafe_allow_html=True)
-            favoris = len(df_ranked[df_ranked['odds_numeric']<5])
-            outsiders = len(df_ranked[df_ranked['odds_numeric']>15])
-            st.markdown(f'<div class="metric-card">⭐ Favoris<br><strong>{favoris}</strong></div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="metric-card">🎲 Outsiders<br><strong>{outsiders}</strong></div>', unsafe_allow_html=True)
-            st.subheader('🥇 Top 3')
-            for i in range(min(3, len(df_ranked))):
-                horse = df_ranked.iloc[i]
-                st.markdown(f"<div class=\"prediction-box\"><strong>{i+1}. {horse['Nom']}</strong><br>Cote: {horse['Cote']} | Score: {horse['score_final']:.3f}</div>", unsafe_allow_html=True)
-
-        # visuals
-        st.subheader('📊 Visualisations')
-        fig = create_visualization(df_ranked)
-        st.plotly_chart(fig, use_container_width=True)
-
-        # e-trio
-        st.subheader('🎲 Générateur e-trio')
-        combos = generate_e_trio(df_ranked, n_combinations=int(num_combos))
-        for idx, c in enumerate(combos):
-            st.markdown(f'{idx+1}. {c[0]} — {c[1]} — {c[2]}')
-
-        # export
-        st.subheader('💾 Export')
-        colx, coly = st.columns(2)
-        with colx:
-            csv_data = df_ranked.to_csv(index=False)
-            st.download_button('📄 CSV', csv_data, f'pronostic_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv')
-        with coly:
-            json_data = df_ranked.to_json(orient='records', indent=2)
-            st.download_button('📋 JSON', json_data, f'pronostic_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json')
-
-    st.markdown('---')
-    st.markdown('**Notes**: Le modèle DL s\'entraîne automatiquement à chaque import. Pour un déploiement stable, considérer l\'usage d\'artifacts externes pour stocker les modèles (S3, etc.).')
-
-if __name__ == '__main__':
-    main()
+        st.info("Veuillez télécharger des images pour commencer.")

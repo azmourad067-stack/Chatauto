@@ -9,6 +9,21 @@ import numpy as np
 import io
 import time
 
+# Import de la logique métier
+from utils import (
+    analyser_course,
+    resultats_vers_dataframe,
+    statistiques_course,
+    valider_dataframe,
+    EXEMPLE_DONNEES,
+    POIDS_CHEVAL,
+    POIDS_JOCKEY,
+    POIDS_ENTRAINEUR,
+)
+
+# ──────────────────────────────────────────────
+#  CONFIGURATION DE LA PAGE
+# ──────────────────────────────────────────────
 
 st.set_page_config(
     page_title="Pronostics Hippiques IA",
@@ -119,6 +134,21 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### ⚖️ Pondérations")
 
+    poids_cheval = st.slider(
+        "Poids Cheval (%)",
+        min_value=10, max_value=90,
+        value=int(POIDS_CHEVAL * 100),
+        step=5,
+        help="Importance de la forme propre du cheval.",
+    ) / 100
+
+    poids_jockey = st.slider(
+        "Poids Jockey (%)",
+        min_value=5, max_value=60,
+        value=int(POIDS_JOCKEY * 100),
+        step=5,
+        help="Importance des performances du jockey.",
+    ) / 100
 
     poids_entraineur_calc = max(0.05, 1.0 - poids_cheval - poids_jockey)
     couleur_info = "🟢" if poids_entraineur_calc >= 0.10 else "🟡"

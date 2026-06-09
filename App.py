@@ -9,16 +9,7 @@ import numpy as np
 import io
 import time
 
-# Import de la logique métier
-from utils import (
-    analyser_course,
-    resultats_vers_dataframe,
-    statistiques_course,
-    valider_dataframe,
-    EXEMPLE_DONNEES,
-    POIDS_CHEVAL,
-    POIDS_JOCKEY,
-    POIDS_ENTRAINEUR,
+
 )
 
 # ──────────────────────────────────────────────

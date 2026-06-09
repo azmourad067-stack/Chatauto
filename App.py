@@ -10,12 +10,6 @@ import io
 import time
 
 
-)
-
-# ──────────────────────────────────────────────
-#  CONFIGURATION DE LA PAGE
-# ──────────────────────────────────────────────
-
 st.set_page_config(
     page_title="Pronostics Hippiques IA",
     page_icon="🏇",

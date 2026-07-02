@@ -1,18 +1,5 @@
-# ──────────────────────────────────────────────────────────────────────
-#  requirements.txt — Application de Pronostics Hippiques
-#  Compatible Python 3.9+ | Streamlit Cloud | GitHub Actions
-# ──────────────────────────────────────────────────────────────────────
-
-# ── Interface web ──────────────────────────────────────────────────────
 streamlit>=1.32.0
-
-# ── Data Science ───────────────────────────────────────────────────────
-pandas>=2.0.0
 numpy>=1.26.0
-openpyxl>=3.1.2          # Lecture des fichiers .xlsx
-
-# ── Visualisation ──────────────────────────────────────────────────────
-plotly>=5.18.0            # Graphiques interactifs (barres, scatter, etc.)
-
-# ── Utilitaires ────────────────────────────────────────────────────────
-# (toutes les autres dépendances sont dans la librairie standard Python)
+pandas>=2.2.0
+plotly>=5.22.0
+scipy>=1.12.0

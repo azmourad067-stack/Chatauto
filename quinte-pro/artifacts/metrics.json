@@ -1,0 +1,11 @@
+{
+  "rmse_place_norm": 0.2918,
+  "spearman_place": 0.3087,
+  "auc_top5": 0.6991,
+  "baseline_auc": 0.5,
+  "n_lignes": 35050,
+  "n_courses": 2500,
+  "n_partants_moy": 14.0,
+  "train_date": "2026-08-25T14:42:07.671444+00:00",
+  "source": "dataset_synthetique"
+}

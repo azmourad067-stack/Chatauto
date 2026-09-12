@@ -1,0 +1,39 @@
+race_id,race_date,track,discipline,distance_m,going,horse,jockey,trainer,draw,weight_kg,age,days_since_last_run,musique,career_starts,career_wins,career_places,earnings,odds,finish_position
+2024-05-12_R1_C3,2024-05-12,ParisLongchamp,plat,1600,bon,Golden Arrow,M. Guyon,A. Fabre,3,57.0,4,21,1p 2p 1p 3p 4p 1p,12,5,9,186000,2.8,1
+2024-05-12_R1_C3,2024-05-12,ParisLongchamp,plat,1600,bon,Silver Wind,C. Soumillon,J-C. Rouget,1,57.0,4,28,2p 1p 3p 2p 5p 1p,10,3,7,142000,3.5,2
+2024-05-12_R1_C3,2024-05-12,ParisLongchamp,plat,1600,bon,Night Dancer,M. Barzalona,F. Head,6,56.5,5,14,3p 4p 2p 0p 3p 6p,18,3,8,121000,6.5,4
+2024-05-12_R1_C3,2024-05-12,ParisLongchamp,plat,1600,bon,Storm Legend,A. Lemaitre,C. Laffon-Parias,4,56.0,4,35,5p 3p 0p 1p 4p 2p,9,2,4,68000,9.0,3
+2024-05-12_R1_C3,2024-05-12,ParisLongchamp,plat,1600,bon,Blue Comet,S. Pasquier,F-H. Graffard,8,55.5,3,42,4p 0p 6p 5p 3p,6,0,1,21000,18.0,6
+2024-05-12_R1_C3,2024-05-12,ParisLongchamp,plat,1600,bon,Wild Spirit,T. Bachelot,M. Delzangles,2,56.0,4,18,0p 7p 3p 4p 0p 5p,14,1,3,39000,25.0,7
+2024-05-12_R1_C3,2024-05-12,ParisLongchamp,plat,1600,bon,Lucky Rocket,C. Demuro,H-A. Pantall,7,57.0,5,10,6p 2p 4p 3p 1p 0p,20,3,7,95000,12.0,5
+2024-05-12_R1_C3,2024-05-12,ParisLongchamp,plat,1600,bon,Iron Knight,E. Hardouin,P. Bary,5,55.0,3,60,0p 8p 0p 5p,4,0,0,8000,45.0,8
+2024-05-19_R1_C5,2024-05-19,Chantilly,plat,2000,souple,Crystal Queen,M. Guyon,A. Fabre,2,58.0,4,14,1p 1p 2p 3p 1p 2p,11,5,9,210000,2.2,2
+2024-05-19_R1_C5,2024-05-19,Chantilly,plat,2000,souple,Shadow Prince,P-C. Boudot,J-C. Rouget,5,57.5,4,25,2p 3p 1p 4p 2p 1p,13,4,9,165000,3.8,1
+2024-05-19_R1_C5,2024-05-19,Chantilly,plat,2000,souple,Fire Runner,M. Velon,S. Wattel,7,56.5,5,30,4p 5p 3p 2p 6p 3p,22,2,9,88000,11.0,3
+2024-05-19_R1_C5,2024-05-19,Chantilly,plat,2000,souple,Ocean Tide,A. Pouchin,Y. Barberot,1,56.0,4,21,3p 0p 4p 1p 5p 0p,15,2,5,61000,14.0,5
+2024-05-19_R1_C5,2024-05-19,Chantilly,plat,2000,souple,Velvet Echo,J-B. Eyquem,N. Clément,4,55.5,3,49,5p 2p 0p 3p,5,0,2,17000,20.0,4
+2024-05-19_R1_C5,2024-05-19,Chantilly,plat,2000,souple,Diamond Flash,F. Veron,M. Boutin,6,57.0,6,12,0p 6p 7p 0p 4p 8p,28,2,6,74000,40.0,7
+2024-05-19_R1_C5,2024-05-19,Chantilly,plat,2000,souple,Star Whisper,T. Piccone,H-A. Pantall,3,56.0,4,90,2p 4p 1p 0p 3p 2p,9,2,6,72000,7.5,6
+2024-05-19_R1_C5,2024-05-19,Chantilly,plat,2000,souple,Sun Falcon,H. Journiac,P. Bary,8,55.0,3,7,7p 0p 5p 6p,4,0,0,6000,60.0,8
+2024-06-02_R4_C1,2024-06-02,Vincennes,trot,2700,bon,Bold Thunder,M. Abrivard,J-M. Bazire,1,,6,20,1a Da 1a 2a 3a 1a,34,11,22,312000,2.5,1
+2024-06-02_R4_C1,2024-06-02,Vincennes,trot,2700,bon,Royal Ember,E. Raffin,S. Guarato,2,,6,27,2a 1a 4a 1a 2a 5a,29,8,18,255000,3.2,3
+2024-06-02_R4_C1,2024-06-02,Vincennes,trot,2700,bon,Fast Glory,F. Nivard,P. Allaire,3,,7,15,3a 2a Da 4a 1a 2a,41,9,21,288000,5.5,2
+2024-06-02_R4_C1,2024-06-02,Vincennes,trot,2700,bon,Black Dream,D. Thomain,F. Souloy,4,,5,34,4a 5a 2a 3a 0a 4a,18,2,8,96000,13.0,5
+2024-06-02_R4_C1,2024-06-02,Vincennes,trot,2700,bon,Golden Spirit,A. Barrier,T. Duvaldestin,5,,6,41,Da 3a 5a Da 2a 1a,25,5,11,141000,9.0,0
+2024-06-02_R4_C1,2024-06-02,Vincennes,trot,2700,bon,Silver Knight,Y. Lebourgeois,R. Derieux,6,,7,12,5a 4a 3a 6a 2a 7a,52,6,19,204000,19.0,4
+2024-06-02_R4_C1,2024-06-02,Vincennes,trot,2700,bon,Night Rocket,G. Gelormini,J-P. Ensch,7,,5,60,0a 6a Da 4a 5a 3a,16,1,5,52000,35.0,6
+2024-06-02_R4_C1,2024-06-02,Vincennes,trot,2700,bon,Storm Arrow,B. Goop,J-M. Bazire,8,,6,22,2a 3a 1a 5a 4a 2a,31,6,17,198000,7.0,7
+2024-06-16_R1_C2,2024-06-16,Deauville,plat,1400,PSF,Golden Arrow,M. Guyon,A. Fabre,4,58.5,4,35,1p 1p 2p 1p 3p 4p,13,6,10,246000,1.9,1
+2024-06-16_R1_C2,2024-06-16,Deauville,plat,1400,PSF,Night Dancer,M. Barzalona,F. Head,2,57.0,5,35,4p 3p 4p 2p 0p 3p,19,3,8,127000,8.0,3
+2024-06-16_R1_C2,2024-06-16,Deauville,plat,1400,PSF,Lucky Rocket,C. Demuro,H-A. Pantall,6,57.5,5,35,5p 6p 2p 4p 3p 1p,21,3,7,101000,10.0,2
+2024-06-16_R1_C2,2024-06-16,Deauville,plat,1400,PSF,Blue Comet,S. Pasquier,F-H. Graffard,1,56.0,3,35,6p 4p 0p 6p 5p 3p,7,0,1,24000,22.0,5
+2024-06-16_R1_C2,2024-06-16,Deauville,plat,1400,PSF,Wild Legend,T. Bachelot,M. Delzangles,5,57.0,4,21,2p 3p 1p 2p 5p 4p,12,2,7,84000,5.0,4
+2024-06-16_R1_C2,2024-06-16,Deauville,plat,1400,PSF,Iron Knight,E. Hardouin,P. Bary,3,55.5,3,35,8p 0p 8p 0p 5p,5,0,0,8000,80.0,7
+2024-06-16_R1_C2,2024-06-16,Deauville,plat,1400,PSF,Ocean Prince,A. Pouchin,Y. Barberot,7,56.5,4,14,3p 2p 4p 3p 1p 6p,16,2,8,79000,9.5,6
+2024-06-30_R1_C4,2024-06-30,Saint-Cloud,plat,2400,très souple,Shadow Prince,P-C. Boudot,J-C. Rouget,3,58.0,4,42,1p 2p 3p 1p 4p 2p,14,5,10,205000,2.6,1
+2024-06-30_R1_C4,2024-06-30,Saint-Cloud,plat,2400,très souple,Crystal Queen,M. Guyon,A. Fabre,1,58.0,4,42,2p 1p 1p 2p 3p 1p,12,5,10,232000,2.4,2
+2024-06-30_R1_C4,2024-06-30,Saint-Cloud,plat,2400,très souple,Fire Runner,M. Velon,S. Wattel,6,57.0,5,42,3p 4p 5p 3p 2p 6p,23,2,10,97000,9.0,4
+2024-06-30_R1_C4,2024-06-30,Saint-Cloud,plat,2400,très souple,Velvet Echo,J-B. Eyquem,N. Clément,2,56.0,3,42,4p 5p 2p 0p 3p,6,0,3,22000,15.0,3
+2024-06-30_R1_C4,2024-06-30,Saint-Cloud,plat,2400,très souple,Star Whisper,T. Piccone,H-A. Pantall,5,57.0,4,42,6p 2p 4p 1p 0p 3p,10,2,6,74000,12.0,6
+2024-06-30_R1_C4,2024-06-30,Saint-Cloud,plat,2400,très souple,Diamond Flash,F. Veron,M. Boutin,4,57.5,6,42,7p 0p 6p 7p 0p 4p,29,2,6,75000,50.0,7
+2024-06-30_R1_C4,2024-06-30,Saint-Cloud,plat,2400,très souple,Sun Falcon,H. Journiac,P. Bary,7,55.5,3,42,8p 7p 0p 5p 6p,5,0,0,6000,70.0,5

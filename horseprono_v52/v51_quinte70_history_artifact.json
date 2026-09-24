@@ -1,0 +1,37 @@
+{
+  "name": "HorseProno_V5_1_Quinte70_RetroPrior",
+  "version": "1.0",
+  "development_period": {"start": "2026-07-11", "end": "2026-08-09", "races": 30},
+  "validation_period": {"races": 28},
+  "pool_recipe": "official_top7_plus_best_3_fundamental_reserves",
+  "rank_probabilities": {
+    "1": 0.5322580645,
+    "2": 0.6290322581,
+    "3": 0.3709677419,
+    "4": 0.4032258065,
+    "5": 0.6612903226,
+    "6": 0.4677419355,
+    "7": 0.3709677419,
+    "8": 0.1451612903,
+    "9": 0.2096774194,
+    "10": 0.2419354839
+  },
+  "top5_structure_probabilities": {
+    "0": 0.0151515152,
+    "1": 0.1060606061,
+    "2": 0.2575757576,
+    "3": 0.5303030303,
+    "4": 0.0757575758,
+    "5": 0.0151515152
+  },
+  "weights": {"current_smart_signal": 0.60, "historical_pattern": 0.40},
+  "validation": {
+    "control_races": 28,
+    "pool_contains_full_quinte": 13,
+    "old_generator_exact_quinte": 6,
+    "retro_generator_exact_quinte": 8,
+    "conditional_old_rate": 0.4615384615,
+    "conditional_retro_rate": 0.6153846154
+  },
+  "notes": "Calibrage exploratoire. Le bloc de controle reste historique et ne remplace pas une validation forward future."
+}

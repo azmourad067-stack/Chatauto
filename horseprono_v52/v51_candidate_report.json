@@ -1,0 +1,50 @@
+{
+  "version": "V5.1 Meta-Consensus",
+  "status": "shadow_forward_validation",
+  "protocol": {
+    "development_races": 30,
+    "temporal_check_races": 28,
+    "candidate_pool": "union V4.5 market Top7 + V4.6 fundamental Top7",
+    "automatic_changes": false
+  },
+  "baseline_holdout28": {
+    "races": 28,
+    "avg_hits": 3.3214285714285716,
+    "trio": 10,
+    "quarte": 8,
+    "quinte": 5,
+    "winner_top1": 8,
+    "winner_top2": 10,
+    "winner_top3": 14,
+    "winner_top7": 20
+  },
+  "free_meta_holdout28": {
+    "races": 28,
+    "avg_hits": 3.2857142857142856,
+    "trio": 10,
+    "quarte": 8,
+    "quinte": 4,
+    "winner_top1": 7,
+    "winner_top2": 10,
+    "winner_top3": 12,
+    "winner_top7": 20
+  },
+  "selective_meta_holdout28": {
+    "races": 28,
+    "avg_hits": 3.2857142857142856,
+    "trio": 10,
+    "quarte": 8,
+    "quinte": 4,
+    "winner_top1": 8,
+    "winner_top2": 10,
+    "winner_top3": 13,
+    "winner_top7": 20
+  },
+  "union_headroom_holdout28": {
+    "avg_hits": 3.75,
+    "complete_quintes": 9,
+    "winner_in_union": 23
+  },
+  "decision": "Keep V4.5/V4.6 official Top7 unchanged. Expose meta scores, confidence, divergence, stance, shadow Top7 and shadow Top3; persist forward predictions.",
+  "caution": "The historical corpus has already been inspected repeatedly in V2-V4.6 research. The 28-race temporal block is informative but no longer pristine. Promotion requires new forward races."
+}

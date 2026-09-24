@@ -1,0 +1,26 @@
+{
+  "DEV30": {
+    "races": 30,
+    "profile_counts": {
+      "EXTENSION_50": 17,
+      "CORE_30": 11,
+      "COUVERTURE_70": 2
+    },
+    "avg_tickets": 44.0,
+    "full_stake_eur": 2640.0,
+    "exact_hits_reconstructed": 4,
+    "exact_hits_70_reconstructed": 5
+  },
+  "HOLDOUT28": {
+    "races": 28,
+    "profile_counts": {
+      "EXTENSION_50": 21,
+      "CORE_30": 7
+    },
+    "avg_tickets": 45.0,
+    "full_stake_eur": 2520.0,
+    "exact_hits_reconstructed": 8,
+    "exact_hits_70_reconstructed": 8
+  },
+  "notes": "Le backtest adaptatif reconstruit les signaux pré-course disponibles. La métrique exact_hits ne remplace pas un règlement PMU complet avec Bonus 4sur5/Bonus 3. Validation forward requise."
+}

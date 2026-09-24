@@ -1,0 +1,18 @@
+HORSEPRONO V5.1 - DEPLOIEMENT STREAMLIT CLOUD
+
+IMPORTANT: le dossier doit s'appeler exactement : horseprono_v51
+Ne pas utiliser d'espace, de parenthèses, ni un suffixe du type " (1)".
+
+Chemin du fichier principal dans Streamlit Cloud :
+horseprono_v51/streamlit_app.py
+
+Le fichier requirements.txt doit rester dans le MEME dossier que streamlit_app.py :
+horseprono_v51/requirements.txt
+
+Si vous préferez mettre les fichiers a la racine du depot, utilisez alors :
+streamlit_app.py
+et requirements.txt a la racine.
+
+Ne jamais ajouter la cle SUPABASE_SECRET_KEY dans GitHub. Utiliser les Secrets de Streamlit Cloud.
+
+Fonction combinatoire : e-Trio10 + Quinté50 (Top10).

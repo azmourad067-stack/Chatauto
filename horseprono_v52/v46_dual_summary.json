@@ -1,0 +1,24 @@
+{
+  "races": 58,
+  "v44_v45": {
+    "avg_hits_top5_in_top7": 3.3793103448275863,
+    "quinte_complete": 9
+  },
+  "fundamental": {
+    "avg_hits_top5_in_top7": 2.7586206896551726,
+    "quinte_complete": 1
+  },
+  "dual_union_oracle_ceiling": {
+    "avg_hits_top5": 3.7758620689655173,
+    "trio_rate": 0.5344827586206896,
+    "quarte_rate": 0.39655172413793105,
+    "quinte_rate": 0.25862068965517243,
+    "quinte_complete": 15,
+    "winner_coverage": 0.8793103448275862
+  },
+  "fundamental_reserve": {
+    "top5_hit_rate": 0.15517241379310345,
+    "avg_consensus_count": 5.017241379310345
+  },
+  "status": "shadow_dual_engine_no_auto_substitution"
+}

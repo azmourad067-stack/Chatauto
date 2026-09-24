@@ -1,0 +1,16 @@
+{
+  "DEV30": {
+    "races": 30,
+    "pool_full": 6,
+    "old_exact": 2,
+    "retro_exact": 5
+  },
+  "HOLDOUT28": {
+    "races": 28,
+    "pool_full": 13,
+    "old_exact": 6,
+    "retro_exact": 8,
+    "old_conditional": 0.46153846153846156,
+    "retro_conditional": 0.6153846153846154
+  }
+}
